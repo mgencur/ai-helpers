@@ -57,7 +57,7 @@ Use the "Parse and Validate URL" steps from "Prow Job Analyze Resource" skill
        - Also remove tmp directory: `rm -rf .work/prow-job-analyze-test-failure/{build_id}/tmp/`
        - This ensures clean state before downloading new content
      - If user chooses "Use existing":
-       - Skip directly to Step 4 (Analyze Test Failure)
+       - Skip directly to Step 4 (Download and Validate Must-Gather)
        - Still need to download prowjob.json if it doesn't exist
 
 2. **Create directory structure**
@@ -75,53 +75,9 @@ Use the "Parse and Validate URL" steps from "Prow Job Analyze Resource" skill
 
 Use the "Download and Validate prowjob.json" steps from "Prow Job Analyze Resource" skill.
 
-### Step 4: Analyze Test Failure
+### Step 4: Download and Validate Must-Gather
 
-1. **Download build-log.txt**
-
-   ```bash
-   gcloud storage cp gs://test-platform-results/{bucket-path}/build-log.txt .work/prow-job-analyze-test-failure/{build_id}/logs/build-log.txt --no-user-output-enabled
-   ```
-
-2. **Parse and validate**
-
-   - Read `.work/prow-job-analyze-resource/{build_id}/logs/build-log.txt`
-   - Search for the Test name
-   - Gather stack trace related to the test
-
-3. **Examine intervals files for cluster activity during E2E failures**
-
-   - Search recursively for E2E timeline artifacts (known as "interval files") within the bucket-path:
-     ```bash
-     gcloud storage ls 'gs://test-platform-results/{bucket-path}/**/e2e-timelines_spyglass_*json'
-     ```
-   - The files can be nested at unpredictable levels below the bucket-path
-   - There could be as many as two matching files
-   - Download all matching interval files (use the full paths from the search results):
-     ```bash
-     gcloud storage cp gs://test-platform-results/{bucket-path}/**/e2e-timelines_spyglass_*.json .work/prow-job-analyze-test-failure/{build_id}/logs/ --no-user-output-enabled
-     ```
-   - If the wildcard copy doesn't work, copy each file individually using the full paths from the search results
-   - **Scan interval files for test failure timing:**
-     - Look for intervals where `source = "E2ETest"` and `message.annotations.status = "Failed"`
-     - Note the `from` and `to` timestamps on this interval - this indicates when the test was running
-   - **Scan interval files for related cluster events:**
-     - Look for intervals that overlap the timeframe when the failed test was running
-     - Filter for intervals with:
-       - `level = "Error"` or `level = "Warning"`
-       - `source = "OperatorState"`
-     - These events may indicate cluster issues that caused or contributed to the test failure
-
-4. **Determine root cause**
-   - Determine a possible root cause for the test failure
-   - Analyze stack traces
-   - Analyze related code in the code repository
-   - Store artifacts from Prow CI job (json/yaml files) related to the failure under `.work/prow-job-analyze-resource/{build_id}/tmp`
-   - Store logs under `.work/prow-job-analyze-resource/{build_id}/logs/`
-   - Provide evidence for the failure
-   - Try to find additional evidence. For example, in logs and events and other json/yaml files
-
-### Step 4.5: Check for Must-Gather Availability
+#### Step 4.5: Check for Must-Gather Availability
 
 1. **Detect must-gather archive**
    ```bash
@@ -140,9 +96,9 @@ Use the "Download and Validate prowjob.json" steps from "Prow Job Analyze Resour
          Description: "Provides cluster-level diagnostics that may reveal root causes (pods, operators, nodes, events). Takes additional time to download and analyze."
        - Label: "No - Skip must-gather (faster)"
          Description: "Only analyze test-level artifacts (build-log, intervals). Faster but may miss cluster-level issues."
-   - If user chooses "No", skip to Step 5
+   - If user chooses "No", skip to Step 5 (Analyze Test Failure)
 
-### Step 4.6: Extract Must-Gather (Conditional)
+#### Step 4.6: Extract Must-Gather (Conditional)
 
 Only if user chose "Yes" in Step 4.5:
 
@@ -232,9 +188,9 @@ Only if user chose "Yes" in Step 4.5:
      fi
      ```
 
-### Step 4.7: Analyze Must-Gather (Conditional)
+#### Step 4.7: Analyze Must-Gather (Conditional)
 
-Only if Step 4.6 completed successfully:
+Only if Step 4.6 Extract Must-Gather completed successfully:
 
 1. **Locate must-gather-analyzer scripts**
 
@@ -289,21 +245,57 @@ Only if Step 4.6 completed successfully:
    See `plugins/must-gather/skills/must-gather-analyzer/SKILL.md` for all available analysis scripts.
 
 4. **Capture analysis output**
-   - Store script output for correlation in Step 4.8
-   - Use in final report in Step 5
+   - Store script output for correlation in Step 5.4
+   - Use in final report in Step 6
 
-### Step 4.8: Correlate Cluster Issues with Test Failure
+### Step 5: Analyze Test Failure
 
-Only if Step 4.7 completed:
+1. **Download build-log.txt**
 
-1. **Temporal correlation**
-   - From Step 4 (interval files), you identified when the test was running (from/to timestamps)
+   ```bash
+   gcloud storage cp gs://test-platform-results/{bucket-path}/build-log.txt .work/prow-job-analyze-test-failure/{build_id}/logs/build-log.txt --no-user-output-enabled
+   ```
+
+2. **Parse and validate**
+
+   - Read `.work/prow-job-analyze-resource/{build_id}/logs/build-log.txt`
+   - Search for the Test name
+   - Gather stack trace related to the test
+
+3. **Examine intervals files for cluster activity during E2E failures**
+
+   - Search recursively for E2E timeline artifacts (known as "interval files") within the bucket-path:
+     ```bash
+     gcloud storage ls 'gs://test-platform-results/{bucket-path}/**/e2e-timelines_spyglass_*json'
+     ```
+   - The files can be nested at unpredictable levels below the bucket-path
+   - There could be as many as two matching files
+   - Download all matching interval files (use the full paths from the search results):
+     ```bash
+     gcloud storage cp gs://test-platform-results/{bucket-path}/**/e2e-timelines_spyglass_*.json .work/prow-job-analyze-test-failure/{build_id}/logs/ --no-user-output-enabled
+     ```
+   - If the wildcard copy doesn't work, copy each file individually using the full paths from the search results
+   - **Scan interval files for test failure timing:**
+     - Look for intervals where `source = "E2ETest"` and `message.annotations.status = "Failed"`
+     - Note the `from` and `to` timestamps on this interval - this indicates when the test was running
+   - **Scan interval files for related cluster events:**
+     - Look for intervals that overlap the timeframe when the failed test was running
+     - Filter for intervals with:
+       - `level = "Error"` or `level = "Warning"`
+       - `source = "OperatorState"`
+     - These events may indicate cluster issues that caused or contributed to the test failure
+
+4. **Correlate Cluster Issues with Test Failure**
+
+   Only if Step 4.6 Extract Must-Gather completed:
+
+   **Temporal correlation**
+   - From the previous step (intervals files), you identified when the test was running (from/to timestamps)
    - Review cluster operator conditions, pod events, and warning events for timing alignment
    - Identify cluster issues that occurred during or shortly before test failure (±5 minutes)
    - Example: "Test failed at 10:23:45. Network operator became degraded at 10:23:12."
 
-2. **Component correlation**
-   - Map test failure to cluster components:
+   **Component correlation**
      - **Namespace correlation**: Test runs in specific namespace → check for pod failures in that namespace
      - **Test assertions correlation**: Test type suggests affected components
        - Network tests → network operator status, CNI pods, network policies
@@ -314,15 +306,24 @@ Only if Step 4.7 completed:
        - "timeout" → check node pressure, resource constraints
        - "not found" → check resource deletion events
 
-3. **Generate correlated insights**
+   **Generate correlated insights**
    - Create specific, actionable correlations like:
      - "Test failed at {time}. {Operator} became degraded at {time} with reason: {reason}"
      - "Pod crash-looping in test namespace: {namespace}/{pod-name}"
      - "Node {node-name} reported {condition} at {time}, test pod was scheduled on this node"
      - "Warning event: {event-message} at {time} (during test execution)"
-   - Store these insights for inclusion in Step 5 final report
+   - Store these insights for inclusion in Step 6 final report
 
-### Step 5: Present Results to User
+5. **Determine root cause**
+   - Determine a possible root cause for the test failure
+   - Analyze stack traces
+   - Analyze related code in the code repository
+   - If Step 4.6 Extract Must-Gather completed use $MUST_GATHER_PATH to analyze logs, events and other json/yaml files.
+   - If Step 4.6 Extract Must-Gather failed, store artifacts from Prow CI job (json/yaml files) related to the failure under `.work/prow-job-analyze-test-failure/{build_id}/tmp`, store logs under `.work/prow-job-analyze-test-failure/{build_id}/logs/`.
+   - Provide evidence for the failure
+   - Try to find additional evidence in gathered artifacts.
+
+### Step 6: Present Results to User
 
 1. **Display summary**
 
